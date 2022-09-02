@@ -20,6 +20,8 @@ class ArticulationDataset(Dataset):
         self.length = kwargs.get("nsample")
         self.ndof = kwargs["ndof"] if "ndof" in kwargs else 1
         self.transform = kwargs.get("transform")
+        if self.transform is None:
+            self.transform=torch.nn.Identity()
         self.threshold_max_depth = 4.0  # Max depth of kinect is 3.5 m
         self.bounds = kwargs.get("bounds")
 
