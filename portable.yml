@@ -1,0 +1,35 @@
+name: DUST-net
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - opencv
+  - mkl
+  - scipy
+  - pathos
+  - tensorboard
+  - numba
+  - quaternion
+  - pytorch
+  - numpy
+  - scikit-image
+  - pip
+  - pybind11
+  - matplotlib
+  - dill
+  - h5py
+  - pandas
+  - ipython
+  - transforms3d
+  - python=3.9
+  - torchvision
+  - tqdm
+  - sympy
+  - sage
+  - pip:
+    - geomstats
+    - dq3d
+    - torchgeometry
+    - pyrealsense2
+    
+prefix: /home/ggutow/miniconda3/envs/screwNet
