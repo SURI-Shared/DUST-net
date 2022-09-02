@@ -55,9 +55,9 @@ def remove_background(cimages,dimages,detectShadows=False):
     return (masks*cimages.transpose((3,0,1,2))).transpose((1,2,3,0)),masks*dimages
         
 
-def process_frames(dimages):
-    #turn the nimg x height x width depth images into a batches (here, only 1) x nimg x 3 channels (repeats depth) x height x width
-    depth=torch.Tensor(np.tile(np.expand_dims(dimages.astype(np.int16),(0,2)),(1,1,3,1,1)))  
+def process_frames(dimages,start=38):
+    #turn the nimg x height x width depth images into a batches (here, only 1) x 16 images x 3 channels (repeats depth) x height x width
+    depth=torch.Tensor(np.tile(np.expand_dims(dimages[start:start+16].astype(np.int16),(0,2)),(1,1,3,1,1)))  
     nimg=depth.shape[1]
       
     #load trained model onto GPU
@@ -72,8 +72,8 @@ def process_frames(dimages):
     with torch.no_grad():
         depthcuda=depth.to(device)
         prediction=dustnet(depthcuda)
-        pred,cov=convert_predictions_VMStSVD(prediction,nimg)
-    return pred,cov
+        pred,cov=convert_predictions_VMStSVD(prediction,nimg-1)
+    return pred[0].cpu(),cov[0].cpu()
 def collect_and_process_realsense(duration):
     cimages,dimages,profile=record_frames(duration)
     pred,cov=process_frames(dimages)
