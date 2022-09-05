@@ -163,7 +163,8 @@ def streaming_estimation(stabilization_frames=5):
                 i+=1
             #run estimation on frames
             with torch.no_grad():
-                prediction=dustnet(torch.Tensor(dimages).to(device))
+                depth_tensor=batch_depth_image_preprocess(dimages, device)
+                prediction=dustnet(depth_tensor)
                 pred,cov=convert_predictions_VMStSVD(prediction,nimg-1)
                 pred=pred[0,-1].cpu()
                 cov=cov[0,-1].cpu()
@@ -182,6 +183,22 @@ def streaming_estimation(stabilization_frames=5):
             #ax.figure.canvas.draw()
     finally:
         pipeline.stop()
+        
+def batch_depth_image_preprocess(dimages,device):
+    '''
+    apply preprocessing steps to the depth images
+    
+    @param dimages: (1,nimg,3,height,width) float 32 np array of depth images
+    @param device: device to put the Tensor on
+    @return (1,nimg,3,height,width) torch.Tensor on device
+    
+    currently this sets anything further than 3 meters to 0 depth then puts on the GPU
+    the D435i is only reliable between 0.3 and 3 meters.
+    0 depth is used as "nothing" in the training data so we need to maintain that behavior
+    '''
+    max_depth=3
+    dimages[dimages>max_depth]=0
+    return torch.Tensor(dimages).to(device)
 
 def plot_axis_estimates(prediction,ax3d,clear=False):
     '''
