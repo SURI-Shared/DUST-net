@@ -122,6 +122,67 @@ def collect_and_process_realsense(duration):
     pred,cov=process_frames(dimages)
     return cimages,dimages,pred,cov
 
+def streaming_estimation(stabilization_frames=5):
+    #setup network
+    #load trained model onto GPU
+    nimg=16
+    dustnet=VMStiefelSVDNet(hidden_size=[1024],img_seq_len=nimg)
+    checkpoint = torch.load("data/trained_wts/partnet_vmstsvd.pt")
+    dustnet.load_state_dict(checkpoint["model_state_dict"])
+    device=torch.device(0)
+    dustnet.float().to(device)
+    dustnet.eval()
+    
+    #launch camera
+    pipeline=rs.pipeline()
+    try:
+        profile=pipeline.start()
+        color_intrinsics=get_color_intrinsics(profile)
+        depth_intrinsics=get_depth_intrinsics(profile)
+        depth_scale=get_depth_scale(profile)
+        frame=pipeline.wait_for_frames()
+        cv.imshow("Axis Estimate",np.array(frame.get_color_frame().get_data())[...,::-1])
+        #img=ax.imshow(frame.get_color_frame().get_data())
+        for _ in range(stabilization_frames):
+            frames=pipeline.wait_for_frames()
+            cv.imshow("Axis Estimate",np.array(frame.get_color_frame().get_data())[...,::-1])
+            cv.waitKey(10)
+            #img.set_data(frames.get_color_frame().get_data())
+            #ax.figure.canvas.draw()
+        #initialize frame buffer
+        dimages=np.zeros((1,nimg,3,depth_intrinsics.height,depth_intrinsics.width),dtype=np.float32)
+        while True:
+            #get 16 frames
+            i=0
+            while i<nimg:
+                frames=pipeline.wait_for_frames()
+                depthf=frames.get_depth_frame()
+                if not depthf:
+                    continue
+                dimages[0,i]=depth_scale*np.array(depthf.get_data())
+                i+=1
+            #run estimation on frames
+            with torch.no_grad():
+                prediction=dustnet(torch.Tensor(dimages).to(device))
+                pred,cov=convert_predictions_VMStSVD(prediction,nimg-1)
+                pred=pred[0,-1].cpu()
+                cov=cov[0,-1].cpu()
+            #update display
+            colorf=frames.get_color_frame()   
+            cimg=np.array(colorf.get_data())
+            try:        
+                color_with_axis=add_axis_to_image(cimg, pred, color_intrinsics, 2)
+            except ValueError:
+                #unable to slide axis into field of view
+                print("Axis does not intersect field of view")
+                color_with_axis=cimg
+            cv.imshow("Axis Estimate",color_with_axis[...,::-1])
+            cv.waitKey(10)
+            #img.set_data(color_with_axis)
+            #ax.figure.canvas.draw()
+    finally:
+        pipeline.stop()
+
 def plot_axis_estimates(prediction,ax3d,clear=False):
     '''
     plot in 3D the lines estimated to be the axis at each timestep
@@ -168,7 +229,7 @@ def to_image_coordinates(points,intrinsics):
     return tuple(transformed.squeeze().astype(np.int64))
 
 def add_axis_to_image(image,label,intrinsics,width=2):
-    tail,head=axis_in_depth_image_coord(label, intrinsics)
+    tail,head=slide_axis_into_view(label, intrinsics)
     return add_arrow_to_image(image, tail, head, width)
 
 def add_arrow_to_image(image,tail,head,width):
