@@ -87,14 +87,15 @@ def collect_and_process_realsense(duration):
     pred,cov=process_frames(dimages)
     return cimages,dimages,pred,cov
 
-def plot_axis_estimates(prediction,ax3d):
+def plot_axis_estimates(prediction,ax3d,clear=False):
     '''
     plot in 3D the lines estimated to be the axis at each timestep
     '''
     l=np.array(prediction[:,:3])
     m=np.array(prediction[:,3:6])
     p=np.cross(l,m)
-    ax3d.clear()
+    if clear:
+        ax3d.clear()
     ax3d.quiver(p[:,0],p[:,1],p[:,2],l[:,0],l[:,1],l[:,2])
     ax3d.set_xlabel("X")
     ax3d.set_ylabel("Y")
