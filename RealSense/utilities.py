@@ -65,7 +65,7 @@ def remove_background(cimages,dimages,detectShadows=False):
 
 def process_frames(dimages,start=38):
     #turn the nimg x height x width depth images into a batches (here, only 1) x 16 images x 3 channels (repeats depth) x height x width
-    depth=torch.Tensor(np.tile(np.expand_dims(dimages[start:start+16].astype(np.int16),(0,2)),(1,1,3,1,1)))  
+    depth=torch.Tensor(np.tile(np.expand_dims(dimages[start:start+16].astype(np.float32),(0,2)),(1,1,3,1,1)))  
     nimg=depth.shape[1]
       
     #load trained model onto GPU
@@ -90,13 +90,27 @@ def collect_and_process_realsense(duration):
 def plot_axis_estimates(prediction,ax3d,clear=False):
     '''
     plot in 3D the lines estimated to be the axis at each timestep
+    
+    DUST-net appears to have been trained to report in a camera frame 
+    where the x axis points forward, the y axis points right, and the z axis points down
+    that is:
+    x points towards increasing depth
+    y points towards increasing width index in pixel space
+    z points towards increasing height index in pixel space
     '''
     l=np.array(prediction[:,:3])
     m=np.array(prediction[:,3:6])
     p=np.cross(l,m)
     if clear:
         ax3d.clear()
+    allpts=np.concatenate((p,l+p))
+    mins=np.min(allpts,0)
+    maxs=np.max(allpts,0)
+    nrange=np.max(maxs-mins)
     ax3d.quiver(p[:,0],p[:,1],p[:,2],l[:,0],l[:,1],l[:,2])
+    ax3d.set_xlim(mins[0],mins[0]+nrange)
+    ax3d.set_ylim(mins[1],mins[1]+nrange)
+    ax3d.set_zlim(mins[2],mins[2]+nrange)
     ax3d.set_xlabel("X")
     ax3d.set_ylabel("Y")
     ax3d.set_zlabel("Z")
