@@ -41,6 +41,14 @@ def record_frames(dur):
         print(len(dimages))
     return np.array(cimages),np.array(dimages),profile
 
+def get_depth_scale(profile=None):
+    if profile is None:
+        pipeline=rs.pipeline()
+        config=rs.config()
+        wrapper=rs.pipeline_wrapper(pipeline)
+        profile=config.resolve(wrapper)
+    return profile.get_device().first_depth_sensor().get_depth_scale()
+
 def remove_background(cimages,dimages,detectShadows=False):
     '''
     DUST-net expects everything except the two bodies of interest to have 0 depth
