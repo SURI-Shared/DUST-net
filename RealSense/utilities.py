@@ -8,11 +8,14 @@ Created on Sep 1, 2022
 
 @author: ggutow
 '''
+from os import path
+import glob
 import pyrealsense2 as rs
 import numpy as np
 import time
 import torch
 from matplotlib import pyplot
+import dill
 
 import cv2 as cv
 
@@ -51,6 +54,13 @@ def record_frames(dur):
         pipeline.stop()
         print(len(dimages))
     return np.array(cimages),np.array(dimages),profile
+
+def get_camera_profile():
+    pipeline=rs.pipeline()
+    config=rs.config()
+    wrapper=rs.pipeline_wrapper(pipeline)
+    profile=config.resolve(wrapper)
+    return profile
 
 def get_depth_scale(profile=None):
     if profile is None:
@@ -184,6 +194,74 @@ def streaming_estimation(stabilization_frames=5):
     finally:
         pipeline.stop()
         
+def batch_estimation(segmented_depth):     
+    nimg=len(segmented_depth)
+    sequence_length=16
+      
+    #load trained model onto GPU
+    dustnet=VMStiefelSVDNet(hidden_size=[1024],img_seq_len=sequence_length)
+    checkpoint = torch.load("data/trained_wts/partnet_vmstsvd.pt")
+    dustnet.load_state_dict(checkpoint["model_state_dict"])
+    device=torch.device(0)
+    dustnet.float().to(device)
+    dustnet.eval()
+    
+    #evaluate network on images and postprocess into a prediction and uncertainty
+    with torch.no_grad():
+        predictions=[]
+        covariances=[]
+        for i in range(nimg-sequence_length):
+            #turn the nimg x height x width depth images into a batches x 16 images x 3 channels (repeats depth) x height x width
+            depth=torch.Tensor(np.tile(np.expand_dims(segmented_depth[i:i+sequence_length].astype(np.float32),(0,2)),(1,1,3,1,1))).to(device)
+            prediction=dustnet(depth)
+            pred,cov=convert_predictions_VMStSVD(prediction,sequence_length-1)
+            predictions.append(pred.cpu())
+            covariances.append(cov.cpu())
+    return predictions,covariances
+
+def save_batch_estimation(segmented_depth,save_path):
+    predictions,covariances=batch_estimation(segmented_depth)
+    with open(save_path,"wb") as fh:
+        dill.dump({"predictions":predictions,"covariances":covariances},fh)
+    
+    
+def depth_based_background_remover(color,scaled_depth):
+    max_depth=3
+    segmented_depths=scaled_depth.copy()
+    segmented_depths[scaled_depth>max_depth]=0
+    seg_color=color.copy()
+    seg_color[scaled_depth>max_depth]=0
+    return seg_color,segmented_depths
+
+def manual_depth_background_remover(color,scaled_depth,threshold):
+    segmented_depths=scaled_depth.copy()
+    segmented_depths[scaled_depth>threshold]=0
+    seg_color=color.copy()
+    seg_color[scaled_depth>threshold]=0
+    return seg_color,segmented_depths
+
+def depth_and_mog_background_remover(color,scaled_depth):
+    max_depth=3
+    segmented_depths=scaled_depth.copy()
+    too_deep=scaled_depth>max_depth
+    segmented_depths[too_deep]=0
+    segmented_color=color.copy()
+    segmented_color[too_deep]=0
+    backSub=cv.createBackgroundSubtractorMOG2()
+    masks=np.array([backSub.apply(ci) for ci in segmented_color])//255
+    return (masks*segmented_color.transpose((3,0,1,2))).transpose((1,2,3,0)),masks*segmented_depths
+
+def mog_depth_background_remover(color,scaled_depth):
+    max_depth=3
+    segmented_depths=scaled_depth.copy()
+    too_deep=scaled_depth>max_depth
+    segmented_depths[too_deep]=0
+    segmented_color=color.copy()
+    segmented_color[too_deep]=0
+    backSub=cv.createBackgroundSubtractorMOG2()
+    masks=np.array([backSub.apply(ci) for ci in segmented_depths])//255
+    return (masks*segmented_color.transpose((3,0,1,2))).transpose((1,2,3,0)),masks*segmented_depths
+        
 def batch_depth_image_preprocess(dimages,device):
     '''
     apply preprocessing steps to the depth images
@@ -227,6 +305,39 @@ def plot_axis_estimates(prediction,ax3d,clear=False):
     ax3d.set_xlabel("X")
     ax3d.set_ylabel("Y")
     ax3d.set_zlabel("Z")
+    
+def save_masked_labeled_color_images(segmented_color,predictions,folder,width=2):
+    n_predictions=len(predictions)
+    n=0
+    while 10**n<n_predictions:
+        n+=1
+
+    sequence_length=len(segmented_color)-n_predictions
+    intrinsics=get_color_intrinsics()
+    for i in range(n_predictions):
+        try:
+            img=add_axis_to_image(segmented_color[i+sequence_length], predictions[i][0,-1], intrinsics, width)
+        except ValueError:
+            #axis not in FOV
+            img=segmented_color[i+sequence_length]
+        file=path.join(folder,"img_"+str(i).zfill(n)+".jpg")
+        cv.imwrite(file,img[...,::-1])
+
+def images_to_video(folder,img_extension,output_name):
+    fourcc = cv.VideoWriter_fourcc(*'mp4v') 
+    imgfiles=glob.glob(path.expanduser(path.join(folder,"*."+img_extension)))
+    img=cv.imread(imgfiles[0])
+    output=path.join(folder,output_name)
+    video=cv.VideoWriter(output,fourcc,30,(1280,720))#tuple(reversed(img.shape[:2])))
+    video.open(output,fourcc,30,(1280,720))
+    print(video.isOpened())
+    for imgfile in imgfiles:
+        img=cv.imread(imgfile)
+        video.write(img)
+    video.release()
+    return output
+        
+                       
 
 def axis_in_depth_image_coord(label,intrinsics):
     l=np.array(label[...,:3])
@@ -331,7 +442,7 @@ def slide_axis_into_view(label,intrinsics):
         #3,0,1:l2>-1,l2<2
         #first, try to not scale at all:
         if l1+1<least_upper and l1+1>greatest_lower:
-                lscaled=l
+            scale=1
         else:
             #would run off the edge in at least one direction
             positive_scaling=least_upper-l1
