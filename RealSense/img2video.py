@@ -5,7 +5,6 @@ Created on Sep 8, 2022
 '''
 import skvideo.io as skio
 import cv2 as cv
-import numpy as np
 from os import path
 import glob
 import sys
